@@ -6,23 +6,8 @@
   margin-bottom: 20px;
 }
 
-.board {
-  display: grid;
-
-  grid-template-columns: repeat(340, 1fr);
-  grid-template-rows: repeat(200, 1fr);
-
-  width: 1360px;
-  height: 800px;
-
+.board-canvas {
+  display: block;
   background-color: white;
   border: 1px solid #ccc;
-}
-
-.cell {
-  background-color: white;
-}
-
-.cell-hovered {
-  border: 1px solid #555;
 }
