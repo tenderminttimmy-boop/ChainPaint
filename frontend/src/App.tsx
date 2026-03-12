@@ -1,5 +1,7 @@
 import "./App.css";
 import { useRef, useEffect, useState } from "react";
+import { ChromePicker } from "react-color";
+import { Pipette, X } from "lucide-react";
 
 const BOARD_WIDTH = 340;
 const BOARD_HEIGHT = 200;
@@ -190,8 +192,8 @@ function App() {
 
       // Position the color picker near the clicked cell, with a small offset to avoid covering the cell itself
       setPickerPosition({
-        x: event.clientX - rect.left + 10,
-        y: event.clientY - rect.top + 10,
+        x: event.clientX - rect.left - 232,
+        y: event.clientY - rect.top + 125,
       });
 
       // Open the color picker when a cell is clicked
@@ -245,10 +247,11 @@ function App() {
         <div
           style={{
             position: "absolute",
+            overflow: "visible",
             left: `${pickerPosition.x}px`,
             top: `${pickerPosition.y}px`,
             backgroundColor: "white",
-            border: "1px solid #ccc",
+            border: "1px solid #b0a6a6",
             padding: "8px",
             zIndex: 10,
             display: "flex",
@@ -256,33 +259,53 @@ function App() {
             gap: "8px",
           }}
         >
-          {/*The cancel button to close the color picker without applying changes.*/}
-          <button
-            onClick={handleCancelEdit}
-            style={{
-              position: "absolute",
-              top: "4px",
-              right: "6px",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: 0,
-              lineHeight: 1,
-              color: "#191919",
-            }}
-          >
-            ×
-          </button>
-
-          {/*The color selector input. A very simple implementation for demonstration purposes. In a real app, you might want to use a more advanced color picker library.*/}
-          <input
-            type="color"
-            value={selectedColor}
-            onChange={(event) => setSelectedColor(event.target.value)}
+          {/*The color picker component. Fairly simple, some styling is applies to it via CSS classes.*/}
+          <ChromePicker
+            color={selectedColor}
+            onChange={(color) => setSelectedColor(color.hex)}
           />
 
-          {/*The apply button to confirm the color change. In our real app, this will be what triggers the transaction to update the cell color on the blockchain.*/}
-          <button onClick={handleApplyColor}>Apply</button>
+          {/* The action buttons for applying or canceling the color change. */}
+          <div
+            style={{
+              display: "flex",
+              gap: "2px",
+            }}
+          >
+            <button
+              className="utility-button"
+              style={{
+                backgroundColor: "blue",
+              }}
+            >
+              <Pipette size={18} />
+            </button>
+
+            <button
+              style={{
+                // flex: 1 is equivilent to "fill width" in figma.
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "green",
+                borderRadius: "5px",
+              }}
+              onClick={handleApplyColor}
+            >
+              CONFIRM
+            </button>
+
+            <button
+              className="utility-button"
+              style={{
+                backgroundColor: "red",
+              }}
+              onClick={handleCancelEdit}
+            >
+              <X size={23} />
+            </button>
+          </div>
         </div>
       )}
 
