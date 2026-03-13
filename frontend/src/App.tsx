@@ -2,9 +2,14 @@ import "./App.css";
 import { useRef, useEffect, useState, useCallback } from "react";
 import { ChromePicker } from "react-color";
 import { Pipette, X } from "lucide-react";
+import {
+  drawCell,
+  drawHoveredCellBorder,
+  worldToScreen,
+} from "./boardRenderer";
 
-const BOARD_WIDTH = 340;
-const BOARD_HEIGHT = 200;
+const BOARD_WIDTH = 510;
+const BOARD_HEIGHT = 300;
 const CELL_SIZE = 5;
 
 const getBoardWorldWidth = () => BOARD_WIDTH * CELL_SIZE;
@@ -41,7 +46,7 @@ function App() {
   } | null>(null);
 
   const [camera, setCamera] = useState(() => {
-    const initialZoom = getMinZoom(window.innerWidth, window.innerHeight);
+    const initialZoom = getMinZoom(window.innerWidth, window.innerHeight) * 1.3;
     return getCenteredCamera(
       window.innerWidth,
       window.innerHeight,
@@ -83,17 +88,15 @@ function App() {
 
   const [isPickerOpen, setIsPickerOpen] = useState(false);
 
-  function worldToScreen(x: number, y: number) {
-    return {
-      x: x * CELL_SIZE * camera.zoom + camera.x,
-      y: y * CELL_SIZE * camera.zoom + camera.y,
-    };
-  }
-
   const pickerPosition =
     selectedCell && isPickerOpen && canvasRect
       ? (() => {
-          const screenPosition = worldToScreen(selectedCell.x, selectedCell.y);
+          const screenPosition = worldToScreen(
+            selectedCell.x,
+            selectedCell.y,
+            CELL_SIZE,
+            camera,
+          );
 
           return {
             x: screenPosition.x + canvasRect.left,
@@ -117,8 +120,7 @@ function App() {
           pickerPosition.y - popupHeight + CELL_SIZE * camera.zoom;
 
         const wouldOverflowLeft = defaultLeft < 0;
-        const wouldOverflowBottom =
-          defaultTop + popupHeight > window.innerHeight;
+        const wouldOverflowBottom = defaultTop + popupHeight > viewport.height;
 
         return {
           x: wouldOverflowLeft ? flippedLeft : defaultLeft,
@@ -276,10 +278,6 @@ function App() {
         dragStateRef.current.didDrag = true;
       }
 
-      if (!dragState.didDrag) {
-        dragStateRef.current.didDrag = true;
-      }
-
       setCamera((prevCamera) =>
         clampCamera({
           x: dragState.startCameraX + deltaX,
@@ -312,6 +310,7 @@ function App() {
 
     setIsPickerOpen(false);
     setSelectedCell(null);
+    setIsEyedropperActive(false);
   }
 
   useEffect(() => {
@@ -321,8 +320,6 @@ function App() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const scaledCellSize = CELL_SIZE * camera.zoom;
-
     let hoveredCell: { x: number; y: number } | null = null;
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -331,32 +328,26 @@ function App() {
       }
     }
 
-    function drawCell(x: number, y: number, color: string) {
-      ctx!.fillStyle = color;
-      ctx!.fillRect(
-        x * scaledCellSize + camera.x,
-        y * scaledCellSize + camera.y,
-        scaledCellSize,
-        scaledCellSize,
-      );
-    }
-
-    function drawHoveredCellBorder(x: number, y: number) {
-      ctx!.strokeStyle = "#555";
-      ctx!.lineWidth = 1;
-      ctx!.strokeRect(
-        x * scaledCellSize + 0.5 + camera.x,
-        y * scaledCellSize + 0.5 + camera.y,
-        scaledCellSize - 1,
-        scaledCellSize - 1,
-      );
-    }
-
     function renderBoard() {
       ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
 
-      for (let x = 0; x < 340; x++) {
-        for (let y = 0; y < 200; y++) {
+      const scaledCellSize = CELL_SIZE * camera.zoom;
+
+      const startX = Math.max(0, Math.floor(-camera.x / scaledCellSize));
+      const startY = Math.max(0, Math.floor(-camera.y / scaledCellSize));
+
+      const endX = Math.min(
+        BOARD_WIDTH,
+        Math.ceil((viewport.width - camera.x) / scaledCellSize),
+      );
+
+      const endY = Math.min(
+        BOARD_HEIGHT,
+        Math.ceil((viewport.height - camera.y) / scaledCellSize),
+      );
+
+      for (let x = startX; x < endX; x++) {
+        for (let y = startY; y < endY; y++) {
           const color = board[y][x];
 
           let displayColor = color;
@@ -371,17 +362,35 @@ function App() {
           }
 
           if (displayColor) {
-            drawCell(x, y, displayColor);
+            drawCell(ctx!, x, y, displayColor, CELL_SIZE, camera);
           }
         }
       }
 
       if (isPickerOpen && isEyedropperActive && hoveredCell) {
-        drawHoveredCellBorder(hoveredCell.x, hoveredCell.y);
+        drawHoveredCellBorder(
+          ctx!,
+          hoveredCell.x,
+          hoveredCell.y,
+          CELL_SIZE,
+          camera,
+        );
       } else if (selectedCell) {
-        drawHoveredCellBorder(selectedCell.x, selectedCell.y);
+        drawHoveredCellBorder(
+          ctx!,
+          selectedCell.x,
+          selectedCell.y,
+          CELL_SIZE,
+          camera,
+        );
       } else if (hoveredCell) {
-        drawHoveredCellBorder(hoveredCell.x, hoveredCell.y);
+        drawHoveredCellBorder(
+          ctx!,
+          hoveredCell.x,
+          hoveredCell.y,
+          CELL_SIZE,
+          camera,
+        );
       }
     }
 
@@ -498,11 +507,12 @@ function App() {
     handleCanvasMouseDown,
     handleWindowMouseMove,
     handleWindowMouseUp,
+    viewport,
   ]);
 
   return (
     <div className="app">
-      {isPickerOpen && pickerPosition && (
+      {isPickerOpen && popupPosition && (
         <div
           style={{
             position: "absolute",
