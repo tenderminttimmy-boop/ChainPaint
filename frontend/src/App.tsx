@@ -1,7 +1,7 @@
 import "./App.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChromePicker } from "react-color";
-import { Pipette, X } from "lucide-react";
+import { Pipette, X, Plus, Minus, CircleHelp, Moon, Sun } from "lucide-react";
 import walletDisconnectedIcon from "./assets/disconnected.svg";
 import walletConnectedIcon from "./assets/connected.svg";
 import {
@@ -75,6 +75,10 @@ function App() {
 
   const [isWalletConnected, setIsWalletConnected] = useState(false);
   const [isWalletButtonHovered, setIsWalletButtonHovered] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isIntroVisible, setIsIntroVisible] = useState(true);
+  const [isAppVisible, setIsAppVisible] = useState(false);
 
   const [camera, setCamera] = useState(() => {
     const initialZoom = getMinZoom(window.innerWidth, window.innerHeight) * 1.3;
@@ -113,6 +117,21 @@ function App() {
 
   const isPickerOpenRef = useRef(isPickerOpen);
   const isEyedropperActiveRef = useRef(isEyedropperActive);
+
+  useEffect(() => {
+    const showAppTimer = window.setTimeout(() => {
+      setIsAppVisible(true);
+    }, 50);
+
+    const hideIntroTimer = window.setTimeout(() => {
+      setIsIntroVisible(false);
+    }, 700);
+
+    return () => {
+      window.clearTimeout(showAppTimer);
+      window.clearTimeout(hideIntroTimer);
+    };
+  }, []);
 
   useEffect(() => {
     viewportRef.current = viewport;
@@ -307,6 +326,32 @@ function App() {
   const handleWindowMouseUp = useCallback(() => {
     dragStateRef.current.isDragging = false;
     dragStateRef.current.didDrag = false;
+  }, []);
+
+  const zoomBy = useCallback((direction: 1 | -1) => {
+    const viewport = viewportRef.current;
+
+    setCamera((prevCamera) => {
+      const zoomStep = 0.35 * direction;
+      const minZoom = getMinZoom(viewport.width, viewport.height);
+      const nextZoom = Math.max(
+        minZoom,
+        Math.min(8, prevCamera.zoom + zoomStep),
+      );
+
+      const centerX = viewport.width / 2;
+      const centerY = viewport.height / 2;
+      const zoomRatio = nextZoom / prevCamera.zoom;
+
+      const newCameraX = centerX - (centerX - prevCamera.x) * zoomRatio;
+      const newCameraY = centerY - (centerY - prevCamera.y) * zoomRatio;
+
+      return clampCameraRef.current({
+        zoom: nextZoom,
+        x: newCameraX,
+        y: newCameraY,
+      });
+    });
   }, []);
 
   const renderBoard = useCallback(() => {
@@ -598,13 +643,46 @@ function App() {
   const walletAddressPreview = "0x...8dh4";
 
   return (
-    <div className="app">
+    <div
+      className={`app ${isDarkMode ? "app--dark" : "app--light"} ${isAppVisible ? "app--visible" : ""}`}
+    >
+      {isIntroVisible && (
+        <div
+          className={`intro-splash ${isAppVisible ? "intro-splash--fade" : ""}`}
+        >
+          <div className="intro-splash__title">BitPlace</div>
+        </div>
+      )}
       <div className="hud">
         <div className="hud-left">
-          <h1 className="app-title">BitPlace</h1>
+          <div className="title-group">
+            <h1 className="app-title">BitPlace</h1>
+
+            <button
+              className={`help-icon-button ${
+                isHelpOpen ? "help-icon-button--active" : ""
+              }`}
+              onClick={() => setIsHelpOpen((prev) => !prev)}
+              aria-label="Help"
+            >
+              <CircleHelp size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="hud-right">
+          <div className="hud-controls">
+            <button
+              className="hud-icon-button"
+              onClick={() => setIsDarkMode((prev) => !prev)}
+              aria-label={
+                isDarkMode ? "Switch to light mode" : "Switch to dark mode"
+              }
+            >
+              {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+          </div>
+
           <button
             className={`hud-button ${
               isWalletConnected
@@ -639,6 +717,40 @@ function App() {
         </div>
       </div>
 
+      {isHelpOpen && (
+        <div className="help-popup">
+          <div className="help-popup__title">About BitPlace</div>
+          <div className="help-popup__body">
+            BitPlace is a permanent public pixel board on Arbitrum One.
+            <br />
+            <br />
+            Everyone can view the canvas. Connect a wallet to paint.
+            <br />
+            <br />
+            Each wallet gets 5 free pixels per 24 hours, then extra paints cost
+            a small fee.
+          </div>
+        </div>
+      )}
+
+      <div className="zoom-controls">
+        <button
+          className="hud-icon-button"
+          onClick={() => zoomBy(1)}
+          aria-label="Zoom in"
+        >
+          <Plus size={18} />
+        </button>
+
+        <button
+          className="hud-icon-button"
+          onClick={() => zoomBy(-1)}
+          aria-label="Zoom out"
+        >
+          <Minus size={18} />
+        </button>
+      </div>
+
       {isPickerOpen && popupPosition && (
         <div
           style={{
@@ -648,8 +760,8 @@ function App() {
             width: "244px",
             left: `${popupPosition!.x}px`,
             top: `${popupPosition!.y}px`,
-            backgroundColor: "white",
-            border: "1px solid #b0a6a6",
+            backgroundColor: isDarkMode ? "#2a2a2a" : "white",
+            border: isDarkMode ? "1px solid #4a4a4a" : "1px solid #b0a6a6",
             zIndex: 10,
             display: "flex",
             justifyContent: "center",
@@ -667,6 +779,7 @@ function App() {
                 picker: {
                   width: "100%",
                   boxSizing: "border-box",
+                  background: isDarkMode ? "#2a2a2a" : "#ffffff",
                 },
               },
             }}
@@ -717,7 +830,7 @@ function App() {
 
       <canvas
         ref={canvasRef}
-        className="board-canvas"
+        className={`board-canvas ${isDarkMode ? "board-canvas--dark" : "board-canvas--light"}`}
         style={{
           width: `${viewport.width}px`,
           height: `${viewport.height}px`,
