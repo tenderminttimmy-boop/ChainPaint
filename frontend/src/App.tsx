@@ -19,7 +19,7 @@ const ABI = [
   "function getPixelsRange(uint32 startIndex, uint32 count) view returns (uint32[] memory)",
 ];
 
-async function loadBoardFromContract(): Promise<(string | null)[][]> {
+async function loadFullBoardFromContract(): Promise<(string | null)[][]> {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
@@ -128,6 +128,51 @@ const getCenteredCamera = (
   };
 };
 
+async function loadVisibleBoardFromContract(
+  camera: Camera,
+  viewport: Viewport,
+): Promise<(string | null)[][]> {
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+
+  const board: (string | null)[][] = Array.from({ length: BOARD_HEIGHT }, () =>
+    Array.from({ length: BOARD_WIDTH }, () => null),
+  );
+
+  const scaledCellSize = CELL_SIZE * camera.zoom;
+
+  const startX = Math.max(0, Math.floor(-camera.x / scaledCellSize));
+  const startY = Math.max(0, Math.floor(-camera.y / scaledCellSize));
+  const endX = Math.min(
+    BOARD_WIDTH,
+    Math.ceil((viewport.width - camera.x) / scaledCellSize),
+  );
+  const endY = Math.min(
+    BOARD_HEIGHT,
+    Math.ceil((viewport.height - camera.y) / scaledCellSize),
+  );
+
+  for (let y = startY; y < endY; y++) {
+    const startIndex = y * BOARD_WIDTH + startX;
+    const count = endX - startX;
+
+    const pixels: bigint[] = await contract.getPixelsRange(startIndex, count);
+
+    for (let i = 0; i < pixels.length; i++) {
+      const stored = Number(pixels[i]);
+      if (stored === 0) continue;
+
+      const rgb = stored - 1;
+      const hex = "#" + rgb.toString(16).padStart(6, "0");
+      const x = startX + i;
+
+      board[y][x] = hex;
+    }
+  }
+
+  return board;
+}
+
 function App() {
   const [board, setBoard] = useState<(string | null)[][]>(() =>
     Array.from({ length: BOARD_HEIGHT }, () =>
@@ -186,11 +231,14 @@ function App() {
     async function bootstrapBoard() {
       const start = performance.now();
 
-      const contractBoard = await loadBoardFromContract();
+      const visibleBoard = await loadVisibleBoardFromContract(
+        cameraRef.current,
+        viewportRef.current,
+      );
 
       if (cancelled) return;
 
-      setBoard(contractBoard);
+      setBoard(visibleBoard);
 
       const elapsed = performance.now() - start;
       const minSplashMs = 700;
@@ -201,6 +249,11 @@ function App() {
         setIsAppVisible(true);
         setIsIntroVisible(false);
       }, remaining);
+
+      const fullBoard = await loadFullBoardFromContract();
+
+      if (cancelled) return;
+      setBoard(fullBoard);
     }
 
     bootstrapBoard();
