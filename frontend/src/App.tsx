@@ -21,6 +21,9 @@ const RPC_URL = "http://127.0.0.1:8545";
 
 const ABI = [
   "function getPixelsRange(uint32 startIndex, uint32 count) view returns (uint32[] memory)",
+  "function paint(uint16 x, uint16 y, uint24 color) payable",
+  "function getPaintStatus(address user) view returns (bool isFree, uint8 paintsUsed, uint256 windowStartTime)",
+  "function paidPaintFeeWei() view returns (uint256)",
   "event PixelPainted(address indexed painter, uint16 indexed x, uint16 indexed y, uint24 color)",
 ];
 
@@ -114,6 +117,17 @@ type Viewport = {
   height: number;
 };
 
+type PixelPaintPatch = {
+  x: number;
+  y: number;
+  color: string;
+};
+
+type PixelPaintSyncResult = {
+  patches: PixelPaintPatch[];
+  latestBlock: number;
+};
+
 const getBoardWorldWidth = () => BOARD_WIDTH * CELL_SIZE;
 const getBoardWorldHeight = () => BOARD_HEIGHT * CELL_SIZE;
 
@@ -172,23 +186,22 @@ const getCenteredCamera = (
   };
 };
 
-async function applyPixelPaintedEventsSince(
-  board: (string | null)[][],
+async function fetchPixelPaintedEventsSince(
   fromBlock: number,
-): Promise<{ board: (string | null)[][]; latestBlock: number }> {
+): Promise<PixelPaintSyncResult> {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
   const latestBlock = await provider.getBlockNumber();
 
   if (fromBlock > latestBlock) {
-    return { board, latestBlock };
+    return { patches: [], latestBlock };
   }
-
-  const nextBoard = board.map((row) => [...row]);
 
   const filter = contract.filters.PixelPainted();
   const events = await contract.queryFilter(filter, fromBlock, latestBlock);
+
+  const patches: PixelPaintPatch[] = [];
 
   for (const event of events) {
     if (!("args" in event) || !event.args) continue;
@@ -197,10 +210,29 @@ async function applyPixelPaintedEventsSince(
     const y = Number(event.args.y);
     const color = Number(event.args.color);
 
-    nextBoard[y][x] = "#" + color.toString(16).padStart(6, "0");
+    patches.push({
+      x,
+      y,
+      color: "#" + color.toString(16).padStart(6, "0"),
+    });
   }
 
-  return { board: nextBoard, latestBlock };
+  return { patches, latestBlock };
+}
+
+function applyPatchesToBoard(
+  board: (string | null)[][],
+  patches: PixelPaintPatch[],
+): (string | null)[][] {
+  if (patches.length === 0) return board;
+
+  const nextBoard = board.map((row) => [...row]);
+
+  for (const patch of patches) {
+    nextBoard[patch.y][patch.x] = patch.color;
+  }
+
+  return nextBoard;
 }
 
 function App() {
@@ -222,6 +254,7 @@ function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isIntroVisible, setIsIntroVisible] = useState(true);
   const [isAppVisible, setIsAppVisible] = useState(false);
+  const [nextPaintIsFree, setNextPaintIsFree] = useState<boolean | null>(null);
 
   const [camera, setCamera] = useState(() => {
     const initialZoom = getMinZoom(window.innerWidth, window.innerHeight) * 1.3;
@@ -241,6 +274,7 @@ function App() {
   const [isEyedropperActive, setIsEyedropperActive] = useState(false);
   const [selectedCell, setSelectedCell] = useState<CellPosition | null>(null);
   const [selectedColor, setSelectedColor] = useState("black");
+  const [isPainting, setIsPainting] = useState(false);
 
   const viewportRef = useRef(viewport);
   const renderBoardRef = useRef<(() => void) | null>(null);
@@ -249,6 +283,7 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hoveredCellRef = useRef<CellPosition | null>(null);
   const cameraRef = useRef(camera);
+  const lastSyncedBlockRef = useRef<number | null>(null);
   const dragStateRef = useRef<DragState>({
     isDragging: false,
     didDrag: false,
@@ -285,19 +320,21 @@ function App() {
           setIsIntroVisible(false);
         }, remaining);
 
-        const synced = await applyPixelPaintedEventsSince(
-          cached.board,
+        const synced = await fetchPixelPaintedEventsSince(
           cached.lastSyncedBlock + 1,
         );
 
         if (cancelled) return;
 
-        setBoard(synced.board);
+        const syncedBoard = applyPatchesToBoard(cached.board, synced.patches);
+
+        setBoard(syncedBoard);
         saveBoardToCache({
-          board: synced.board,
+          board: syncedBoard,
           lastSyncedBlock: synced.latestBlock,
         });
 
+        lastSyncedBlockRef.current = synced.latestBlock;
         return;
       }
 
@@ -349,6 +386,40 @@ function App() {
   useEffect(() => {
     cameraRef.current = camera;
   }, [camera]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadNextPaintStatus() {
+      if (!isPickerOpen || !selectedCell || !isConnected || !address) {
+        setNextPaintIsFree(null);
+        return;
+      }
+
+      try {
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+
+        const [isFree] = await contract.getPaintStatus(address);
+
+        if (!cancelled) {
+          setNextPaintIsFree(Boolean(isFree));
+        }
+      } catch (error) {
+        console.error("Failed to load paint status:", error);
+
+        if (!cancelled) {
+          setNextPaintIsFree(null);
+        }
+      }
+    }
+
+    loadNextPaintStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isPickerOpen, selectedCell, isConnected, address]);
 
   useEffect(() => {
     isPickerOpenRef.current = isPickerOpen;
@@ -640,21 +711,72 @@ function App() {
   ]);
 
   const handleCancelEdit = useCallback(() => {
+    if (isPainting) return;
+
     setIsPickerOpen(false);
     setSelectedCell(null);
     setIsEyedropperActive(false);
-  }, []);
+    setNextPaintIsFree(null);
+  }, [isPainting]);
 
-  function handleApplyColor() {
-    if (!selectedCell) return;
+  async function handleApplyColor() {
+    if (!selectedCell || isPainting) return;
 
-    setBoard((prevBoard) => {
-      const newBoard = prevBoard.map((row) => [...row]);
-      newBoard[selectedCell.y][selectedCell.x] = selectedColor;
-      return newBoard;
-    });
+    if (!isConnected) {
+      openConnectModal?.();
+      return;
+    }
 
-    handleCancelEdit();
+    if (!window.ethereum) {
+      console.error("No wallet provider found");
+      return;
+    }
+
+    try {
+      setIsPainting(true);
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
+
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+      const [isFree] = await contract.getPaintStatus(signerAddress);
+      const paidPaintFeeWei = await contract.paidPaintFeeWei();
+
+      const colorInt = parseInt(selectedColor.replace("#", ""), 16);
+      const txValue = isFree ? 0n : paidPaintFeeWei;
+
+      const tx = await contract.paint(
+        selectedCell.x,
+        selectedCell.y,
+        colorInt,
+        { value: txValue },
+      );
+
+      const receipt = await tx.wait();
+
+      if (!receipt || receipt.status !== 1) {
+        throw new Error("Paint transaction failed");
+      }
+
+      const nextBoard = board.map((row) => [...row]);
+      nextBoard[selectedCell.y][selectedCell.x] = selectedColor;
+
+      setBoard(nextBoard);
+      saveBoardToCache({
+        board: nextBoard,
+        lastSyncedBlock: receipt.blockNumber,
+      });
+
+      lastSyncedBlockRef.current = receipt.blockNumber;
+
+      handleCancelEdit();
+    } catch (error) {
+      console.error("Paint failed:", error);
+    } finally {
+      setIsPainting(false);
+    }
   }
 
   useEffect(() => {
@@ -786,6 +908,51 @@ function App() {
     handleWindowMouseUp,
     handleCancelEdit,
   ]);
+
+  useEffect(() => {
+    if (!isAppVisible) return;
+
+    let cancelled = false;
+    let isSyncing = false;
+
+    const intervalId = window.setInterval(async () => {
+      const lastSyncedBlock = lastSyncedBlockRef.current;
+
+      if (lastSyncedBlock === null || isSyncing) return;
+
+      isSyncing = true;
+
+      try {
+        const synced = await fetchPixelPaintedEventsSince(lastSyncedBlock + 1);
+
+        if (cancelled) return;
+
+        lastSyncedBlockRef.current = synced.latestBlock;
+
+        if (synced.patches.length === 0) return;
+
+        setBoard((prevBoard) => {
+          const nextBoard = applyPatchesToBoard(prevBoard, synced.patches);
+
+          saveBoardToCache({
+            board: nextBoard,
+            lastSyncedBlock: synced.latestBlock,
+          });
+
+          return nextBoard;
+        });
+      } catch (error) {
+        console.error("Live sync failed:", error);
+      } finally {
+        isSyncing = false;
+      }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [isAppVisible]);
 
   const pickerPosition =
     selectedCell && isPickerOpen && canvasRect
@@ -1016,9 +1183,13 @@ function App() {
             >
               <button
                 className={`utility-button${isEyedropperActive ? " active-tool" : ""}`}
-                onClick={() => setIsEyedropperActive(!isEyedropperActive)}
+                onClick={() =>
+                  !isPainting && setIsEyedropperActive(!isEyedropperActive)
+                }
+                disabled={isPainting}
                 style={{
                   backgroundColor: "#1756d5",
+                  opacity: isPainting ? 0.75 : 1,
                 }}
               >
                 <Pipette size={18} />
@@ -1028,19 +1199,29 @@ function App() {
                 className="utility-button"
                 style={{
                   flex: 1,
-                  backgroundColor: "#0bc11d",
+                  backgroundColor:
+                    nextPaintIsFree === null
+                      ? "#0bc11d"
+                      : nextPaintIsFree
+                        ? "#0bc11d"
+                        : "#a039cd",
+                  opacity: isPainting ? 0.75 : 1,
+                  cursor: isPainting ? "default" : "pointer",
                 }}
                 onClick={handleApplyColor}
+                disabled={isPainting}
               >
-                CONFIRM
+                {isPainting ? "PENDING..." : "CONFIRM"}
               </button>
 
               <button
                 className="utility-button"
                 style={{
                   backgroundColor: "#d63a3a",
+                  opacity: isPainting ? 0.75 : 1,
                 }}
                 onClick={handleCancelEdit}
+                disabled={isPainting}
               >
                 <X size={23} />
               </button>

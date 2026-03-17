@@ -16,35 +16,6 @@
   color: #f3f3f3;
 }
 
-.title {
-  margin-bottom: 20px;
-}
-
-.utility-button {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  font-family: "Jersey 10", sans-serif;
-  font-size: 2em;
-  color: inherit;
-  border: none;
-  border-radius: 5px;
-  box-shadow: none;
-  transition: box-shadow 0.18s ease;
-}
-
-.utility-button:hover {
-  box-shadow: inset 0 0 5px 20px #ffffff09;
-}
-
-.utility-button:focus,
-.utility-button:focus-visible {
-  box-shadow: inset 0 0 10px #0000003e;
-}
-
 .app--light .chrome-picker input {
   color: #ffffff !important;
 }
@@ -61,37 +32,16 @@
   color: #d0d0d0 !important;
 }
 
-.zoom-controls {
-  position: fixed;
-  bottom: 18px;
-  right: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 25;
-  pointer-events: auto;
-}
-
-.title-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.active-tool {
-  box-shadow:
-    inset 0 0 0 1px #ffffff80,
-    inset 0 0 8px 3px #ffffff98 !important;
-}
-
 .board-canvas {
   display: block;
 }
 
-.wallet-icon {
-  display: block;
-  width: 32px;
-  height: 32px;
+.board-canvas--light {
+  background-color: white;
+}
+
+.board-canvas--dark {
+  background-color: #29272a;
 }
 
 .hud {
@@ -112,6 +62,22 @@
   display: flex;
   flex-direction: row;
   gap: 5px;
+}
+
+.hud-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.title {
+  margin-bottom: 20px;
 }
 
 .app-title {
@@ -146,10 +112,49 @@
   /* box-shadow 0.1s ease; */
 }
 
-.hud-controls {
-  display: flex;
-  align-items: center;
+.hud-button:hover {
+  box-shadow:
+    inset 0 0 5px 20px #ffffff5d,
+    2px 3px 1px rgba(0, 0, 0, 0.573);
+}
+
+.hud-button:focus,
+.hud-button:focus-visible {
+  box-shadow:
+    inset 0 0 10px #0000003e,
+    2px 3px 1px rgba(0, 0, 0, 0.573);
+}
+
+.hud-button--connected {
+  border-color: #16d55c;
+  background-color: rgba(255, 255, 255, 0.484);
   gap: 10px;
+  padding-left: 14px;
+  padding-right: 16px;
+}
+
+.wallet-icon {
+  display: block;
+  width: 32px;
+  height: 32px;
+}
+
+.wallet-label {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transform: translateX(6px);
+  transition:
+    max-width 0.25s ease,
+    opacity 0.2s ease,
+    transform 0.25s ease;
+}
+
+.wallet-label--visible {
+  max-width: 120px;
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .hud-icon-button {
@@ -177,6 +182,31 @@
 
 .hud-icon-button:focus,
 .hud-icon-button:focus-visible {
+  box-shadow: inset 0 0 10px #0000003e;
+}
+
+.utility-button {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: "Jersey 10", sans-serif;
+  font-size: 2em;
+  color: inherit;
+  border: none;
+  border-radius: 5px;
+  box-shadow: none;
+  transition: box-shadow 0.18s ease;
+}
+
+.utility-button:hover {
+  box-shadow: inset 0 0 5px 20px #ffffff27;
+}
+
+.utility-button:focus,
+.utility-button:focus-visible {
   box-shadow: inset 0 0 10px #0000003e;
 }
 
@@ -214,6 +244,12 @@
   border: 2px solid #16d55c;
 }
 
+.active-tool {
+  box-shadow:
+    inset 0 0 0 1px #ffffff80,
+    inset 0 0 8px 3px #ffffff98 !important;
+}
+
 .help-popup {
   position: fixed;
   top: 72px;
@@ -241,12 +277,15 @@
   color: #222;
 }
 
-.board-canvas--light {
-  background-color: white;
-}
-
-.board-canvas--dark {
-  background-color: #29272a;
+.zoom-controls {
+  position: fixed;
+  bottom: 18px;
+  right: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 25;
+  pointer-events: auto;
 }
 
 .intro-splash {
@@ -281,43 +320,4 @@
   font-size: 18px;
   color: rgb(172, 20, 227);
   user-select: none;
-}
-
-.wallet-label {
-  max-width: 0;
-  opacity: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  transform: translateX(6px);
-  transition:
-    max-width 0.25s ease,
-    opacity 0.2s ease,
-    transform 0.25s ease;
-}
-
-.wallet-label--visible {
-  max-width: 120px;
-  opacity: 1;
-  transform: translateX(0);
-}
-
-.hud-button:hover {
-  box-shadow:
-    inset 0 0 5px 20px #ffffff09,
-    2px 3px 1px rgba(0, 0, 0, 0.573);
-}
-
-.hud-button:focus,
-.hud-button:focus-visible {
-  box-shadow:
-    inset 0 0 10px #0000003e,
-    2px 3px 1px rgba(0, 0, 0, 0.573);
-}
-
-.hud-button--connected {
-  border-color: #16d55c;
-  background-color: rgba(255, 255, 255, 0.484);
-  gap: 10px;
-  padding-left: 14px;
-  padding-right: 16px;
 }
