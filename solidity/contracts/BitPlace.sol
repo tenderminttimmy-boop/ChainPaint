@@ -2,8 +2,9 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract BitPlace is Ownable {
+contract BitPlace is Ownable, ReentrancyGuard {
     // ============================================================
     // Board constants
     // ============================================================
@@ -11,6 +12,7 @@ contract BitPlace is Ownable {
     uint16 public constant BOARD_WIDTH = 510;
     uint16 public constant BOARD_HEIGHT = 300;
     uint32 public constant TOTAL_CELLS = 153000;
+    uint8 public constant FREE_PAINTS_PER_WINDOW = 5;
 
     // ============================================================
     // Events
@@ -22,6 +24,14 @@ contract BitPlace is Ownable {
         uint16 indexed y,
         uint24 color
     );
+
+    event LotteryWon(
+        address indexed winner,
+        uint256 winnerAmount,
+        uint256 feeRecipientAmount
+    );
+
+    event PaidPaint(address indexed painter, uint256 amount);
 
     // ============================================================
     // Structs
@@ -53,18 +63,26 @@ contract BitPlace is Ownable {
     // recipient of the 25% lottery split
     address public feeRecipient;
 
+    uint256 public minLotteryPayoutWei;
+    uint16 public lotteryWinBps;
+
     // ============================================================
     // Constructor
     // ============================================================
 
     constructor(
         uint256 _paidPaintFeeWei,
-        address _feeRecipient
+        address _feeRecipient,
+        uint256 _minLotteryPayoutWei,
+        uint16 _lotteryWinBps
     ) Ownable(msg.sender) {
         require(_feeRecipient != address(0), "Invalid fee recipient");
+        require(_lotteryWinBps <= 10000, "Invalid lottery odds");
 
         paidPaintFeeWei = _paidPaintFeeWei;
         feeRecipient = _feeRecipient;
+        minLotteryPayoutWei = _minLotteryPayoutWei;
+        lotteryWinBps = _lotteryWinBps;
     }
 
     // ============================================================
@@ -83,6 +101,17 @@ contract BitPlace is Ownable {
     function setAdminPainter(address account, bool isAdmin) external onlyOwner {
         require(account != address(0), "Invalid admin address");
         adminPainters[account] = isAdmin;
+    }
+
+    function setMinLotteryPayoutWei(
+        uint256 _minLotteryPayoutWei
+    ) external onlyOwner {
+        minLotteryPayoutWei = _minLotteryPayoutWei;
+    }
+
+    function setLotteryWinBps(uint16 _lotteryWinBps) external onlyOwner {
+        require(_lotteryWinBps <= 10000, "Invalid lottery odds");
+        lotteryWinBps = _lotteryWinBps;
     }
 
     // ============================================================
@@ -125,7 +154,11 @@ contract BitPlace is Ownable {
     // Core paint function
     // ============================================================
 
-    function paint(uint16 x, uint16 y, uint24 color) external payable {
+    function paint(
+        uint16 x,
+        uint16 y,
+        uint24 color
+    ) external payable nonReentrant {
         require(x < BOARD_WIDTH, "X out of bounds");
         require(y < BOARD_HEIGHT, "Y out of bounds");
 
@@ -158,12 +191,13 @@ contract BitPlace is Ownable {
             // 5 -> this is paint #6 (first paid paint)
             // 6+ -> paid, but not first paid paint
 
-            if (window.paintsUsedInWindow < 5) {
+            if (window.paintsUsedInWindow < FREE_PAINTS_PER_WINDOW) {
                 require(msg.value == 0, "Do not send ETH for free paint");
             } else {
                 require(msg.value == paidPaintFeeWei, "Incorrect ETH amount");
+                emit PaidPaint(msg.sender, msg.value);
 
-                if (window.paintsUsedInWindow == 5) {
+                if (window.paintsUsedInWindow == FREE_PAINTS_PER_WINDOW) {
                     shouldRunLottery = true;
                 }
             }
@@ -189,16 +223,61 @@ contract BitPlace is Ownable {
     // Internal helpers
     // ============================================================
 
+    function getPaintStatus(
+        address user
+    )
+        external
+        view
+        returns (bool isFree, uint8 paintsUsed, uint256 windowStartTime)
+    {
+        FreePaintWindow memory window = freePaintWindows[user];
+
+        return (
+            window.paintsUsedInWindow < FREE_PAINTS_PER_WINDOW,
+            window.paintsUsedInWindow,
+            window.windowStart
+        );
+    }
+
     function _flatten(uint16 x, uint16 y) internal pure returns (uint32) {
         return uint32(y) * BOARD_WIDTH + uint32(x);
     }
 
     function _handleLottery(address painter) internal {
-        // Stub for now.
-        // Later this will:
-        // 1. determine whether painter wins
-        // 2. if win, send:
-        //    - 75% of held ETH to painter
-        //    - 25% of held ETH to feeRecipient
+        uint256 balance = address(this).balance;
+
+        if (balance < minLotteryPayoutWei) {
+            return;
+        }
+
+        uint256 randomNumber = uint256(
+            keccak256(
+                abi.encodePacked(
+                    block.prevrandao,
+                    block.timestamp,
+                    painter,
+                    balance
+                )
+            )
+        );
+
+        uint256 roll = randomNumber % 10000;
+
+        if (roll >= lotteryWinBps) {
+            return;
+        }
+
+        uint256 winnerAmount = (balance * 75) / 100;
+        uint256 recipientAmount = balance - winnerAmount;
+
+        (bool winnerSuccess, ) = payable(painter).call{value: winnerAmount}("");
+        require(winnerSuccess, "Winner payout failed");
+
+        (bool recipientSuccess, ) = payable(feeRecipient).call{
+            value: recipientAmount
+        }("");
+        require(recipientSuccess, "Fee recipient payout failed");
+
+        emit LotteryWon(painter, winnerAmount, recipientAmount);
     }
 }

@@ -5,17 +5,19 @@ async function main() {
 
   const paidPaintFeeWei = ethers.parseEther("0.0002");
   const feeRecipient = "0x0000000000000000000000000000000000000001";
+  const minLotteryPayoutWei = ethers.parseEther("0.0005");
+  const lotteryWinBps = 2000; // 20% for easy local testing
 
   const bitPlace = await ethers.deployContract("BitPlace", [
     paidPaintFeeWei,
     feeRecipient,
+    minLotteryPayoutWei,
+    lotteryWinBps,
   ]);
 
   await bitPlace.waitForDeployment();
 
-  const address = await bitPlace.getAddress();
-
-  console.log("BitPlace deployed to:", address);
+  console.log("BitPlace deployed to:", await bitPlace.getAddress());
 }
 
 main().catch((error) => {
