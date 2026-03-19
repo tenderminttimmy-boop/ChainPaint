@@ -17,7 +17,7 @@ const configs: Record<string, AppConfig> = {
     chainId: 421614,
     chainName: "Arbitrum Sepolia",
     rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
-    contractAddress: "REPLACE_ME",
+    contractAddress: "0xB22680671f6b2dFDd83b41229cb87C14e9de7754",
   },
 
   arbitrum: {
