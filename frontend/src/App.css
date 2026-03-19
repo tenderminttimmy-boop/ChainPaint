@@ -85,7 +85,7 @@
   font-family: "Jersey 15", sans-serif;
   font-size: 48px;
   font-weight: 700;
-  color: rgb(172, 20, 227);
+  color: #ac14e3;
   text-shadow: 2px 3px 0 rgba(0, 0, 0, 0.573);
   user-select: none;
 }
@@ -258,7 +258,7 @@
   z-index: 30;
   padding: 14px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.645);
+  background: rgba(255, 255, 255, 0.77);
   backdrop-filter: blur(5px) brightness(1.8);
   border: 1px solid #b0a6a6;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
@@ -268,7 +268,7 @@
   margin-bottom: 8px;
   font-family: "Jersey 15", sans-serif;
   font-size: 24px;
-  color: rgb(172, 20, 227);
+  color: #ac14e3;
 }
 
 .help-popup__body {
@@ -286,6 +286,65 @@
   gap: 8px;
   z-index: 25;
   pointer-events: auto;
+}
+
+.paint-notice {
+  position: fixed;
+  flex: auto;
+  left: 16px;
+  bottom: 16px;
+  z-index: 1200;
+  min-width: 80px;
+  max-width: 320px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 2px solid #ac14e3;
+  background: rgba(20, 20, 24, 0.96);
+  color: #f5f7fb;
+  font-size: 14px;
+  line-height: 1.4;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transform: translateY(20px);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+  pointer-events: none;
+}
+
+.paint-notice--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.paint-notice--hidden {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.paint-notice--success {
+  border-color: rgb(48, 223, 106);
+}
+
+.paint-notice--error {
+  border-color: rgba(205, 25, 25, 0.846);
+}
+
+.paint-notice--submitting,
+.paint-notice--confirming {
+  border-color: rgb(75, 122, 197);
+}
+
+@keyframes paint-notice-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .intro-splash {

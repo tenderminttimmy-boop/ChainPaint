@@ -7,6 +7,7 @@ import walletConnectedIcon from "./assets/connected.svg";
 import { useAccount, useDisconnect, useEnsName } from "wagmi";
 import { mainnet } from "wagmi/chains";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { APP_CONFIG } from "./config";
 
 import {
   drawCell,
@@ -16,8 +17,10 @@ import {
 
 import { ethers } from "ethers";
 
-const CONTRACT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
-const RPC_URL = "http://127.0.0.1:8545";
+const CONTRACT_ADDRESS = APP_CONFIG.contractAddress;
+const RPC_URL = APP_CONFIG.rpcUrl;
+const TARGET_CHAIN_ID = APP_CONFIG.chainId;
+const TARGET_CHAIN_NAME = APP_CONFIG.chainName;
 
 const ABI = [
   "function getPixelsRange(uint32 startIndex, uint32 count) view returns (uint32[] memory)",
@@ -128,6 +131,13 @@ type PixelPaintSyncResult = {
   latestBlock: number;
 };
 
+type PaintTxState =
+  | { phase: "idle" }
+  | { phase: "submitting"; message: string }
+  | { phase: "confirming"; message: string; hash: string }
+  | { phase: "success"; message: string }
+  | { phase: "error"; message: string };
+
 const getBoardWorldWidth = () => BOARD_WIDTH * CELL_SIZE;
 const getBoardWorldHeight = () => BOARD_HEIGHT * CELL_SIZE;
 
@@ -186,6 +196,51 @@ const getCenteredCamera = (
   };
 };
 
+function getPaintErrorMessage(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === 4001 || error.code === "ACTION_REJECTED")
+  ) {
+    return "Transaction rejected.";
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    const message = error.message.toLowerCase();
+
+    if (message.includes("insufficient funds")) {
+      return "Not enough ETH for this paint.";
+    }
+
+    if (message.includes("user rejected")) {
+      return "Transaction rejected.";
+    }
+  }
+
+  return "Paint failed. Please try again.";
+}
+
+function getPaintButtonLabel(
+  isPainting: boolean,
+  paintTxState: PaintTxState,
+): string {
+  if (paintTxState.phase === "success") {
+    return "SUCCESS!";
+  }
+
+  if (isPainting) {
+    return "PENDING...";
+  }
+
+  return "CONFIRM";
+}
+
 async function fetchPixelPaintedEventsSince(
   fromBlock: number,
 ): Promise<PixelPaintSyncResult> {
@@ -235,6 +290,23 @@ function applyPatchesToBoard(
   return nextBoard;
 }
 
+async function switchToChain(chainId: number): Promise<boolean> {
+  if (!window.ethereum) return false;
+
+  const hexChainId = "0x" + chainId.toString(16);
+
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: hexChainId }],
+    });
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function App() {
   const [board, setBoard] = useState<(string | null)[][]>(() =>
     Array.from({ length: BOARD_HEIGHT }, () =>
@@ -255,6 +327,11 @@ function App() {
   const [isIntroVisible, setIsIntroVisible] = useState(true);
   const [isAppVisible, setIsAppVisible] = useState(false);
   const [nextPaintIsFree, setNextPaintIsFree] = useState<boolean | null>(null);
+  const [paintTxState, setPaintTxState] = useState<PaintTxState>({
+    phase: "idle",
+  });
+  const [isPaintNoticeVisible, setIsPaintNoticeVisible] = useState(false);
+  const [isPaintNoticeMounted, setIsPaintNoticeMounted] = useState(false);
 
   const [camera, setCamera] = useState(() => {
     const initialZoom = getMinZoom(window.innerWidth, window.innerHeight) * 1.3;
@@ -428,6 +505,35 @@ function App() {
   useEffect(() => {
     isEyedropperActiveRef.current = isEyedropperActive;
   }, [isEyedropperActive]);
+
+  useEffect(() => {
+    let raf1 = 0;
+    let raf2 = 0;
+    let hideTimeout = 0;
+
+    if (paintTxState.phase !== "idle") {
+      setIsPaintNoticeMounted(true);
+      setIsPaintNoticeVisible(false);
+
+      raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => {
+          setIsPaintNoticeVisible(true);
+        });
+      });
+    } else if (isPaintNoticeMounted) {
+      setIsPaintNoticeVisible(false);
+
+      hideTimeout = window.setTimeout(() => {
+        setIsPaintNoticeMounted(false);
+      }, 180);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.clearTimeout(hideTimeout);
+    };
+  }, [paintTxState.phase, isPaintNoticeMounted]);
 
   const getDisplayedCellColor = useCallback(
     (x: number, y: number) => {
@@ -716,6 +822,7 @@ function App() {
     setSelectedCell(null);
     setIsEyedropperActive(false);
     setNextPaintIsFree(null);
+    setPaintTxState({ phase: "idle" });
   }, [isPainting]);
 
   async function handleApplyColor() {
@@ -732,9 +839,41 @@ function App() {
     }
 
     try {
+      setPaintTxState({
+        phase: "submitting",
+        message: "Confirm transaction in wallet.",
+      });
       setIsPainting(true);
 
-      const provider = new ethers.BrowserProvider(window.ethereum);
+      let provider = new ethers.BrowserProvider(window.ethereum);
+
+      const network = await provider.getNetwork();
+      const currentChainId = Number(network.chainId);
+
+      if (currentChainId !== TARGET_CHAIN_ID) {
+        setPaintTxState({
+          phase: "submitting",
+          message: `Switching to ${TARGET_CHAIN_NAME}...`,
+        });
+
+        const switched = await switchToChain(TARGET_CHAIN_ID);
+
+        if (!switched) {
+          setPaintTxState({
+            phase: "error",
+            message: `Network switch rejected or failed.`,
+          });
+
+          window.setTimeout(() => {
+            setPaintTxState({ phase: "idle" });
+          }, 4000);
+
+          return;
+        }
+
+        provider = new ethers.BrowserProvider(window.ethereum);
+      }
+
       const signer = await provider.getSigner();
       const signerAddress = await signer.getAddress();
       const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
@@ -749,6 +888,11 @@ function App() {
         colorInt,
         { value: txValue },
       );
+      setPaintTxState({
+        phase: "confirming",
+        message: "Tx submitted.",
+        hash: tx.hash,
+      });
 
       const receipt = await tx.wait();
 
@@ -765,10 +909,28 @@ function App() {
         lastSyncedBlock: receipt.blockNumber,
       });
 
+      setPaintTxState({
+        phase: "success",
+        message: "Paint Tx success!",
+      });
+
       lastSyncedBlockRef.current = receipt.blockNumber;
 
-      handleCancelEdit();
+      window.setTimeout(() => {
+        handleCancelEdit();
+      }, 1000);
     } catch (error) {
+      const message = getPaintErrorMessage(error);
+
+      setPaintTxState({
+        phase: "error",
+        message,
+      });
+
+      window.setTimeout(() => {
+        setPaintTxState({ phase: "idle" });
+      }, 4000);
+
       console.error("Paint failed:", error);
     } finally {
       setIsPainting(false);
@@ -1094,24 +1256,42 @@ function App() {
             <div className="help-popup__title">About BitPlace</div>
             <div className="help-popup__body">
               BitPlace is a fully on-chain collaborative pixel art canvas on
-              Arbitrum, similar to r/place.
+              Arbitrum One, similar to r/place.
               <br />
               <br />
-              Connect a wallet to start painting!
+              This project is 100% just a fun way for me to learn various dev
+              skills. Please feel free to try and break it, and report any bugs
+              to{" "}
+              <a
+                href="https://x.com/bitplaceclick"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {" "}
+                @bitplaceclick{" "}
+              </a>{" "}
+              on Twitter/X.
               <br />
               <br />
-              Each wallet gets 5 free pixel paints per 24 hours, then extra
-              paints cost a small fee, about ~$0.50 in ETH.
+              Each wallet can paint up to 5 pixels for{" "}
+              <span style={{ color: "#0bc11d", fontWeight: "bold" }}>
+                free
+              </span>{" "}
+              every 24 hours. After that, each additional pixel{" "}
+              <span style={{ color: "#a039cd", fontWeight: "bold" }}>
+                costs ~$0.50
+              </span>{" "}
+              in ETH.
               <br />
               <br />
-              Extra paint fees go into a lottery pool. Everytime you paint your
-              6th pixel of the day, you're automatically entered into the
-              lottery!
+              Since this is all for fun, 100% of those fees go into a lottery
+              pool. Everytime you paint your 6th pixel of the day, you're
+              automatically entered into the lottery!
               <br />
               If you win, you receive 75% of all ETH in the pool automatically!
               <br />
               <br />
-              <em>2.5% chance of winning each day</em>
+              Happy painting!
             </div>
           </div>
         )}
@@ -1207,7 +1387,7 @@ function App() {
                 onClick={handleApplyColor}
                 disabled={isPainting}
               >
-                {isPainting ? "PENDING..." : "CONFIRM"}
+                {getPaintButtonLabel(isPainting, paintTxState)}
               </button>
 
               <button
@@ -1222,6 +1402,20 @@ function App() {
                 <X size={23} />
               </button>
             </div>
+          </div>
+        )}
+
+        {isPaintNoticeMounted && (
+          <div
+            className={`paint-notice paint-notice--${paintTxState.phase} ${
+              isPaintNoticeVisible
+                ? "paint-notice--visible"
+                : "paint-notice--hidden"
+            }`}
+            role="status"
+            aria-live="polite"
+          >
+            {paintTxState.phase !== "idle" ? paintTxState.message : ""}
           </div>
         )}
 
