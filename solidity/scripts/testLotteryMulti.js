@@ -29,15 +29,15 @@ async function main() {
   );
 
   // Use a few different local accounts
-  for (let s = 0; s < 5; s++) {
+  for (let s = 0; s < 20; s++) {
     const signer = signers[s];
     const signerAddress = await signer.getAddress();
     const connectedBitPlace = bitPlace.connect(signer);
 
     console.log(`\n--- Signer ${s} (${signerAddress}) ---`);
 
-    // 5 free paints
-    for (let i = 0; i < 5; i++) {
+    // 10 free paints
+    for (let i = 0; i < 10; i++) {
       const x = s * 10 + i;
       const y = 50;
 
@@ -47,8 +47,8 @@ async function main() {
       console.log(`Free paint #${i + 1} confirmed at (${x}, ${y})`);
     }
 
-    // 6th paint = first paid paint = lottery check
-    const paidX = s * 10 + 5;
+    // 11th paint = first paid paint = lottery check
+    const paidX = s * 10 + 10;
     const paidY = 50;
 
     const signerBalanceBefore = await ethers.provider.getBalance(signerAddress);
@@ -65,7 +65,7 @@ async function main() {
     const signerBalanceDelta = signerBalanceAfter - signerBalanceBefore;
 
     if (signerBalanceDelta > 0) {
-      console.log("WINNER! Lottery payout happened.");
+      console.log("---------WINNER! Lottery payout happened!---------");
     }
     console.log(`Paid paint confirmed at (${paidX}, ${paidY})`);
     console.log("Signer balance after:", signerBalanceAfter.toString());

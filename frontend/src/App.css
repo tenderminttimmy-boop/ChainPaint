@@ -64,6 +64,13 @@
   gap: 5px;
 }
 
+.hud-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
 .hud-controls {
   display: flex;
   align-items: center;
@@ -131,6 +138,23 @@
   gap: 10px;
   padding-left: 14px;
   padding-right: 16px;
+}
+
+.hud-submit-button {
+  min-width: 124px;
+  max-height: 40px;
+  font-family: "Jersey 10", sans-serif;
+  font-size: 28px;
+  color: #fff;
+  border-color: #000;
+}
+
+.hud-submit-button--free {
+  background-color: #0bc11d;
+}
+
+.hud-submit-button--paid {
+  background-color: #a039cd;
 }
 
 .wallet-icon {

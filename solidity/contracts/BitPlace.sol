@@ -147,6 +147,14 @@ contract BitPlace is Ownable, ReentrancyGuard {
         address account
     ) external view returns (uint64 windowStart, uint8 paintsUsedInWindow) {
         FreePaintWindow memory window = freePaintWindows[account];
+
+        if (
+            window.windowStart == 0 ||
+            block.timestamp >= uint256(window.windowStart) + 1 days
+        ) {
+            return (0, 0);
+        }
+
         return (window.windowStart, window.paintsUsedInWindow);
     }
 
@@ -162,50 +170,8 @@ contract BitPlace is Ownable, ReentrancyGuard {
         require(x < BOARD_WIDTH, "X out of bounds");
         require(y < BOARD_HEIGHT, "Y out of bounds");
 
+        bool shouldRunLottery = _consumePaintAllowance(msg.sender, 1);
         uint32 index = _flatten(x, y);
-
-        bool isAdmin = adminPainters[msg.sender];
-        bool shouldRunLottery = false;
-
-        if (!isAdmin) {
-            FreePaintWindow storage window = freePaintWindows[msg.sender];
-
-            // Start a new personal 24h window if:
-            // 1. this user has never painted before, or
-            // 2. their previous window expired
-            if (
-                window.windowStart == 0 ||
-                block.timestamp >= uint256(window.windowStart) + 1 days
-            ) {
-                window.windowStart = uint64(block.timestamp);
-                window.paintsUsedInWindow = 0;
-            }
-
-            // paintsUsedInWindow is the number of paints already used
-            // in the current personal window before this paint happens.
-            //
-            // 0 -> this is paint #1 (free)
-            // 1 -> this is paint #2 (free)
-            // ...
-            // 4 -> this is paint #5 (free)
-            // 5 -> this is paint #6 (first paid paint)
-            // 6+ -> paid, but not first paid paint
-
-            if (window.paintsUsedInWindow < FREE_PAINTS_PER_WINDOW) {
-                require(msg.value == 0, "Do not send ETH for free paint");
-            } else {
-                require(msg.value == paidPaintFeeWei, "Incorrect ETH amount");
-                emit PaidPaint(msg.sender, msg.value);
-
-                if (window.paintsUsedInWindow == FREE_PAINTS_PER_WINDOW) {
-                    shouldRunLottery = true;
-                }
-            }
-
-            window.paintsUsedInWindow += 1;
-        } else {
-            require(msg.value == 0, "Admin paint should not send ETH");
-        }
 
         // Encode color so:
         // 0 = empty
@@ -213,6 +179,38 @@ contract BitPlace is Ownable, ReentrancyGuard {
         pixelData[index] = uint32(color) + 1;
 
         emit PixelPainted(msg.sender, x, y, color);
+
+        if (shouldRunLottery) {
+            _handleLottery(msg.sender);
+        }
+    }
+
+    function paintBatch(
+        uint16[] calldata xs,
+        uint16[] calldata ys,
+        uint24[] calldata colors
+    ) external payable nonReentrant {
+        uint256 count = xs.length;
+
+        require(count > 0, "Empty batch");
+        require(ys.length == count, "Y array length mismatch");
+        require(colors.length == count, "Color array length mismatch");
+
+        bool shouldRunLottery = _consumePaintAllowance(msg.sender, count);
+
+        for (uint256 i = 0; i < count; i++) {
+            uint16 x = xs[i];
+            uint16 y = ys[i];
+            uint24 color = colors[i];
+
+            require(x < BOARD_WIDTH, "X out of bounds");
+            require(y < BOARD_HEIGHT, "Y out of bounds");
+
+            uint32 index = _flatten(x, y);
+            pixelData[index] = uint32(color) + 1;
+
+            emit PixelPainted(msg.sender, x, y, color);
+        }
 
         if (shouldRunLottery) {
             _handleLottery(msg.sender);
@@ -232,6 +230,13 @@ contract BitPlace is Ownable, ReentrancyGuard {
     {
         FreePaintWindow memory window = freePaintWindows[user];
 
+        if (
+            window.windowStart == 0 ||
+            block.timestamp >= uint256(window.windowStart) + 1 days
+        ) {
+            return (true, 0, 0);
+        }
+
         return (
             window.paintsUsedInWindow < FREE_PAINTS_PER_WINDOW,
             window.paintsUsedInWindow,
@@ -241,6 +246,60 @@ contract BitPlace is Ownable, ReentrancyGuard {
 
     function _flatten(uint16 x, uint16 y) internal pure returns (uint32) {
         return uint32(y) * BOARD_WIDTH + uint32(x);
+    }
+
+    function _consumePaintAllowance(
+        address painter,
+        uint256 paintCount
+    ) internal returns (bool shouldRunLottery) {
+        bool isAdmin = adminPainters[painter];
+
+        if (isAdmin) {
+            require(msg.value == 0, "Admin paint should not send ETH");
+            return false;
+        }
+
+        FreePaintWindow storage window = freePaintWindows[painter];
+
+        if (
+            window.windowStart == 0 ||
+            block.timestamp >= uint256(window.windowStart) + 1 days
+        ) {
+            window.windowStart = uint64(block.timestamp);
+            window.paintsUsedInWindow = 0;
+        }
+
+        require(
+            paintCount <= type(uint8).max - window.paintsUsedInWindow,
+            "Batch too large"
+        );
+
+        uint256 paintsUsedBefore = window.paintsUsedInWindow;
+        uint256 paintsUsedAfter = paintsUsedBefore + paintCount;
+
+        if (
+            paintsUsedBefore < FREE_PAINTS_PER_WINDOW &&
+            paintsUsedAfter > FREE_PAINTS_PER_WINDOW
+        ) {
+            revert("Cannot mix free and paid paints");
+        }
+
+        if (paintsUsedAfter <= FREE_PAINTS_PER_WINDOW) {
+            require(msg.value == 0, "Do not send ETH for free paint");
+        } else {
+            uint256 totalFee = paidPaintFeeWei * paintCount;
+            require(msg.value == totalFee, "Incorrect ETH amount");
+            emit PaidPaint(painter, msg.value);
+
+            // The lottery should run once when the user's first paid paint
+            // happens. For a paid batch, that means the batch starts after
+            // the free window has already been fully consumed.
+            if (paintsUsedBefore == FREE_PAINTS_PER_WINDOW) {
+                shouldRunLottery = true;
+            }
+        }
+
+        window.paintsUsedInWindow += uint8(paintCount);
     }
 
     function _handleLottery(address painter) internal {

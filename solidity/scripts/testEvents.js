@@ -14,14 +14,14 @@ async function main() {
   console.log("Contract:", contractAddress);
   console.log("Paid fee:", paidPaintFeeWei.toString());
 
-  // 5 free paints
-  for (let i = 0; i < 5; i++) {
+  // 10 free paints
+  for (let i = 0; i < 10; i++) {
     const tx = await bitPlace.paint(i, 99, 0x00ff00, { value: 0 });
     await tx.wait();
   }
 
-  // 6th paint = paid paint = lottery check
-  const paidTx = await bitPlace.paint(5, 99, 0xff0000, {
+  // 11th paint = first paid paint = lottery check
+  const paidTx = await bitPlace.paint(10, 99, 0xff0000, {
     value: paidPaintFeeWei,
   });
   const receipt = await paidTx.wait();

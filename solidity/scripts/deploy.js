@@ -6,7 +6,7 @@ async function main() {
   const paidPaintFeeWei = ethers.parseEther("0.0002");
   const feeRecipient = "0x7c092b4064606FC72D08Ac34146d71a04B39ca7b";
   const minLotteryPayoutWei = ethers.parseEther("0.0005");
-  const lotteryWinBps = 250; // 2.5% chance to win
+  const lotteryWinBps = 350; // 3.5% chance to win
 
   const bitPlace = await ethers.deployContract("BitPlace", [
     paidPaintFeeWei,

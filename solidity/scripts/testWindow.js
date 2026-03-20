@@ -10,8 +10,8 @@ async function main() {
 
   console.log("Paid paint fee (wei):", paidPaintFeeWei.toString());
 
-  // We will paint 5 different pixels for free
-  for (let i = 0; i < 5; i++) {
+  // We will paint 10 different pixels for free
+  for (let i = 0; i < 10; i++) {
     const x = i;
     const y = 0;
     const color = 0x00ff00; // green
@@ -31,29 +31,29 @@ async function main() {
   );
 
   console.log("Window start:", windowStart.toString());
-  console.log("Paints used after 5 paints:", paintsUsedInWindow.toString());
+  console.log("Paints used after 10 paints:", paintsUsedInWindow.toString());
 
-  // Try paint #6 with NO ETH: should fail
+  // Try paint #11 with NO ETH: should fail
   try {
-    console.log("Attempting paint #6 with no ETH (should fail)...");
-    const tx = await bitPlace.paint(5, 0, 0x0000ff, {
+    console.log("Attempting paint #11 with no ETH (should fail)...");
+    const tx = await bitPlace.paint(10, 0, 0x0000ff, {
       value: 0,
     });
     await tx.wait();
 
-    console.log("ERROR: paint #6 unexpectedly succeeded with no ETH.");
+    console.log("ERROR: paint #11 unexpectedly succeeded with no ETH.");
   } catch (error) {
-    console.log("Paint #6 correctly failed with no ETH.");
+    console.log("Paint #11 correctly failed with no ETH.");
   }
 
-  // Now try paint #6 again with the exact required ETH: should succeed
-  console.log("Attempting paint #6 with exact ETH fee...");
-  const paidTx = await bitPlace.paint(5, 0, 0x0000ff, {
+  // Now try paint #11 again with the exact required ETH: should succeed
+  console.log("Attempting paint #11 with exact ETH fee...");
+  const paidTx = await bitPlace.paint(10, 0, 0x0000ff, {
     value: paidPaintFeeWei,
   });
 
   await paidTx.wait();
-  console.log("Paint #6 succeeded with exact ETH fee.");
+  console.log("Paint #11 succeeded with exact ETH fee.");
 
   const [, finalPaintsUsedInWindow] = await bitPlace.getCurrentWindow(
     await (await ethers.provider.getSigner()).getAddress(),

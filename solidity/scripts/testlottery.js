@@ -32,15 +32,15 @@ async function main() {
     recipientBalanceBefore.toString(),
   );
 
-  // Do 5 free paints
-  for (let i = 0; i < 5; i++) {
+  // Do 10 free paints
+  for (let i = 0; i < 10; i++) {
     const tx = await bitPlace.paint(i, 10, 0x00ff00, { value: 0 });
     await tx.wait();
     console.log(`Free paint #${i + 1} confirmed`);
   }
 
-  // 6th paint = first paid paint, should trigger lottery check
-  const paidTx = await bitPlace.paint(5, 10, 0xff0000, {
+  // 11th paint = first paid paint, should trigger lottery check
+  const paidTx = await bitPlace.paint(10, 10, 0xff0000, {
     value: paidPaintFeeWei,
   });
   const receipt = await paidTx.wait();

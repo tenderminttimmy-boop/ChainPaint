@@ -1,7 +1,15 @@
 import "./App.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChromePicker } from "react-color";
-import { Pipette, X, Plus, Minus, CircleHelp, Moon, Sun } from "lucide-react";
+import {
+  Pipette,
+  Check,
+  Plus,
+  Minus,
+  CircleHelp,
+  Moon,
+  Sun,
+} from "lucide-react";
 import walletDisconnectedIcon from "./assets/disconnected.svg";
 import walletConnectedIcon from "./assets/connected.svg";
 import { useAccount, useDisconnect, useEnsName } from "wagmi";
@@ -25,6 +33,7 @@ const TARGET_CHAIN_NAME = APP_CONFIG.chainName;
 const ABI = [
   "function getPixelsRange(uint32 startIndex, uint32 count) view returns (uint32[] memory)",
   "function paint(uint16 x, uint16 y, uint24 color) payable",
+  "function paintBatch(uint16[] xs, uint16[] ys, uint24[] colors) payable",
   "function getPaintStatus(address user) view returns (bool isFree, uint8 paintsUsed, uint256 windowStartTime)",
   "function paidPaintFeeWei() view returns (uint256)",
   "function adminPainters(address) view returns (bool)",
@@ -89,6 +98,7 @@ const BOARD_HEIGHT = 300;
 const CELL_SIZE = 5;
 const POPUP_WIDTH = 244;
 const POPUP_HEIGHT = 312;
+const FREE_PAINTS_PER_WINDOW = 10;
 const CACHE_VERSION = 2;
 const NORMALIZED_CONTRACT_ADDRESS = CONTRACT_ADDRESS.toLowerCase();
 const CACHE_KEY = `bitplace_board_v${CACHE_VERSION}_${TARGET_CHAIN_ID}_${NORMALIZED_CONTRACT_ADDRESS}`;
@@ -133,9 +143,19 @@ type PixelPaintPatch = {
   color: string;
 };
 
+type PendingPaint = PixelPaintPatch;
+
 type PixelPaintSyncResult = {
   patches: PixelPaintPatch[];
   latestBlock: number;
+};
+
+type BatchPaintMode = "free" | "paid";
+
+type PaintStatus = {
+  isFree: boolean;
+  paintsUsed: number;
+  isAdmin: boolean;
 };
 
 type PaintTxState =
@@ -261,6 +281,14 @@ function getPaintErrorMessage(error: unknown): string {
       return "Not enough ETH for this paint.";
     }
 
+    if (message.includes("cannot mix free and paid paints")) {
+      return "Free and paid paints can't be mixed in one batch.";
+    }
+
+    if (message.includes("incorrect eth amount")) {
+      return "Incorrect ETH amount for this batch.";
+    }
+
     if (message.includes("user rejected")) {
       return "Transaction rejected.";
     }
@@ -281,7 +309,50 @@ function getPaintButtonLabel(
     return "PENDING...";
   }
 
-  return "CONFIRM";
+  return "SUBMIT";
+}
+
+function getCellKey(x: number, y: number) {
+  return `${x}:${y}`;
+}
+
+function upsertPendingPaint(
+  pendingPaints: PendingPaint[],
+  nextPaint: PendingPaint,
+  board: (string | null)[][],
+): PendingPaint[] {
+  const nextPendingPaints = pendingPaints.filter(
+    (paint) => paint.x !== nextPaint.x || paint.y !== nextPaint.y,
+  );
+
+  if (board[nextPaint.y][nextPaint.x] === nextPaint.color) {
+    return nextPendingPaints;
+  }
+
+  nextPendingPaints.push(nextPaint);
+
+  return nextPendingPaints;
+}
+
+function getBatchPaintMode(
+  paintStatus: PaintStatus | null,
+  paintCount: number,
+): BatchPaintMode | null {
+  if (!paintStatus || paintCount === 0) return null;
+
+  if (paintStatus.isAdmin) {
+    return "free";
+  }
+
+  if (paintStatus.paintsUsed >= FREE_PAINTS_PER_WINDOW) {
+    return "paid";
+  }
+
+  if (paintStatus.paintsUsed + paintCount <= FREE_PAINTS_PER_WINDOW) {
+    return "free";
+  }
+
+  return null;
 }
 
 async function fetchPixelPaintedEventsSince(
@@ -369,7 +440,7 @@ function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isIntroVisible, setIsIntroVisible] = useState(true);
   const [isAppVisible, setIsAppVisible] = useState(false);
-  const [nextPaintIsFree, setNextPaintIsFree] = useState<boolean | null>(null);
+  const [paintStatus, setPaintStatus] = useState<PaintStatus | null>(null);
   const [paintTxState, setPaintTxState] = useState<PaintTxState>({
     phase: "idle",
   });
@@ -394,6 +465,7 @@ function App() {
   const [isEyedropperActive, setIsEyedropperActive] = useState(false);
   const [selectedCell, setSelectedCell] = useState<CellPosition | null>(null);
   const [selectedColor, setSelectedColor] = useState("black");
+  const [pendingPaints, setPendingPaints] = useState<PendingPaint[]>([]);
   const [isPainting, setIsPainting] = useState(false);
 
   const viewportRef = useRef(viewport);
@@ -511,8 +583,14 @@ function App() {
     let cancelled = false;
 
     async function loadNextPaintStatus() {
-      if (!isPickerOpen || !selectedCell || !isConnected || !address) {
-        setNextPaintIsFree(null);
+      if (
+        !isConnected ||
+        !address ||
+        (!isPickerOpen && pendingPaints.length === 0)
+      ) {
+        if (!isConnected || !address) {
+          setPaintStatus(null);
+        }
         return;
       }
 
@@ -520,16 +598,21 @@ function App() {
         const provider = new ethers.JsonRpcProvider(RPC_URL);
         const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
-        const [isFree] = await contract.getPaintStatus(address);
+        const [isFree, paintsUsed] = await contract.getPaintStatus(address);
+        const isAdmin = await contract.adminPainters(address);
 
         if (!cancelled) {
-          setNextPaintIsFree(Boolean(isFree));
+          setPaintStatus({
+            isFree: Boolean(isFree),
+            paintsUsed: Number(paintsUsed),
+            isAdmin: Boolean(isAdmin),
+          });
         }
       } catch (error) {
         console.error("Failed to load paint status:", error);
 
         if (!cancelled) {
-          setNextPaintIsFree(null);
+          setPaintStatus(null);
         }
       }
     }
@@ -539,7 +622,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [isPickerOpen, selectedCell, isConnected, address]);
+  }, [isPickerOpen, isConnected, address, pendingPaints.length]);
 
   useEffect(() => {
     isPickerOpenRef.current = isPickerOpen;
@@ -580,6 +663,9 @@ function App() {
 
   const getDisplayedCellColor = useCallback(
     (x: number, y: number) => {
+      const pendingPaint = pendingPaints.find(
+        (paint) => paint.x === x && paint.y === y,
+      );
       const selectedCell = selectedCellRef.current;
 
       if (
@@ -591,9 +677,13 @@ function App() {
         return selectedColorRef.current;
       }
 
+      if (pendingPaint) {
+        return pendingPaint.color;
+      }
+
       return board[y][x] ?? "#ffffff";
     },
-    [board],
+    [board, pendingPaints],
   );
 
   const getDisplayedCellColorRef = useRef(getDisplayedCellColor);
@@ -787,6 +877,9 @@ function App() {
     }
 
     const hoveredCell = hoveredCellRef.current;
+    const pendingPaintMap = new Map(
+      pendingPaints.map((paint) => [getCellKey(paint.x, paint.y), paint.color]),
+    );
     const scaledCellSize = CELL_SIZE * camera.zoom;
     const startX = Math.max(0, Math.floor(-camera.x / scaledCellSize));
     const startY = Math.max(0, Math.floor(-camera.y / scaledCellSize));
@@ -804,9 +897,7 @@ function App() {
 
     for (let x = startX; x < endX; x++) {
       for (let y = startY; y < endY; y++) {
-        const color = board[y][x];
-
-        let displayColor = color;
+        let displayColor = pendingPaintMap.get(getCellKey(x, y)) ?? board[y][x];
 
         if (
           selectedCell &&
@@ -854,6 +945,7 @@ function App() {
     viewport,
     selectedCell,
     selectedColor,
+    pendingPaints,
     isPickerOpen,
     isEyedropperActive,
   ]);
@@ -864,14 +956,89 @@ function App() {
     setIsPickerOpen(false);
     setSelectedCell(null);
     setIsEyedropperActive(false);
-    setNextPaintIsFree(null);
     window.setTimeout(() => {
       setPaintTxState({ phase: "idle" });
     }, 300);
   }, [isPainting]);
 
-  async function handleApplyColor() {
+  const showPaintError = useCallback((message: string) => {
+    setPaintTxState({
+      phase: "error",
+      message,
+    });
+
+    window.setTimeout(() => {
+      setPaintTxState({ phase: "idle" });
+    }, 4000);
+  }, []);
+
+  const buildDraftPendingPaints = useCallback(
+    (includeSelectedCell: boolean) => {
+      if (!includeSelectedCell || !selectedCell || !isPickerOpen) {
+        return pendingPaints;
+      }
+
+      return upsertPendingPaint(
+        pendingPaints,
+        {
+          x: selectedCell.x,
+          y: selectedCell.y,
+          color: selectedColor,
+        },
+        board,
+      );
+    },
+    [board, pendingPaints, selectedCell, selectedColor, isPickerOpen],
+  );
+
+  const handleStagePaint = useCallback(() => {
     if (!selectedCell || isPainting) return;
+
+    if (!isConnected) {
+      openConnectModal?.();
+      return;
+    }
+
+    if (!paintStatus) {
+      showPaintError("Paint status is still loading.");
+      return;
+    }
+
+    const nextPendingPaints = upsertPendingPaint(
+      pendingPaints,
+      {
+        x: selectedCell.x,
+        y: selectedCell.y,
+        color: selectedColor,
+      },
+      board,
+    );
+
+    if (
+      nextPendingPaints.length > 0 &&
+      !getBatchPaintMode(paintStatus, nextPendingPaints.length)
+    ) {
+      showPaintError("Free and paid paints can't be mixed in one batch.");
+      return;
+    }
+
+    setPendingPaints(nextPendingPaints);
+    handleCancelEdit();
+  }, [
+    board,
+    handleCancelEdit,
+    isConnected,
+    isPainting,
+    openConnectModal,
+    paintStatus,
+    pendingPaints,
+    selectedCell,
+    selectedColor,
+    showPaintError,
+  ]);
+
+  const handleSubmitBatch = useCallback(async () => {
+    if (isPainting) return;
 
     if (!isConnected) {
       openConnectModal?.();
@@ -880,6 +1047,23 @@ function App() {
 
     if (!window.ethereum) {
       console.error("No wallet provider found");
+      return;
+    }
+
+    const draftPendingPaints = buildDraftPendingPaints(isPickerOpen);
+
+    if (draftPendingPaints.length === 0) {
+      handleCancelEdit();
+      return;
+    }
+
+    if (!paintStatus) {
+      showPaintError("Paint status is still loading.");
+      return;
+    }
+
+    if (!getBatchPaintMode(paintStatus, draftPendingPaints.length)) {
+      showPaintError("Free and paid paints can't be mixed in one batch.");
       return;
     }
 
@@ -904,15 +1088,7 @@ function App() {
         const switched = await switchToChain(TARGET_CHAIN_ID);
 
         if (!switched) {
-          setPaintTxState({
-            phase: "error",
-            message: `Network switch rejected or failed.`,
-          });
-
-          window.setTimeout(() => {
-            setPaintTxState({ phase: "idle" });
-          }, 4000);
-
+          showPaintError("Network switch rejected or failed.");
           return;
         }
 
@@ -922,22 +1098,40 @@ function App() {
       const signer = await provider.getSigner();
       const signerAddress = await signer.getAddress();
       const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-      const [isFree] = await contract.getPaintStatus(signerAddress);
+      const [isFree, paintsUsed] = await contract.getPaintStatus(signerAddress);
       const isAdminPainter = await contract.adminPainters(signerAddress);
       const paidPaintFeeWei = await contract.paidPaintFeeWei();
-      const colorInt = parseInt(selectedColor.replace("#", ""), 16);
-      const txValue = isFree || isAdminPainter ? 0n : paidPaintFeeWei;
 
-      console.log("isFree:", isFree);
-      console.log("isAdminPainter:", isAdminPainter);
-      console.log("txValue:", txValue.toString());
+      const livePaintStatus: PaintStatus = {
+        isFree: Boolean(isFree),
+        paintsUsed: Number(paintsUsed),
+        isAdmin: Boolean(isAdminPainter),
+      };
 
-      const tx = await contract.paint(
-        selectedCell.x,
-        selectedCell.y,
-        colorInt,
+      const batchMode = getBatchPaintMode(
+        livePaintStatus,
+        draftPendingPaints.length,
+      );
+
+      if (!batchMode) {
+        showPaintError("Free and paid paints can't be mixed in one batch.");
+        return;
+      }
+
+      const txValue =
+        livePaintStatus.isAdmin || batchMode === "free"
+          ? 0n
+          : paidPaintFeeWei * BigInt(draftPendingPaints.length);
+
+      const tx = await contract.paintBatch(
+        draftPendingPaints.map((paint) => paint.x),
+        draftPendingPaints.map((paint) => paint.y),
+        draftPendingPaints.map((paint) =>
+          parseInt(paint.color.replace("#", ""), 16),
+        ),
         { value: txValue },
       );
+
       setPaintTxState({
         phase: "confirming",
         message: "Tx submitted.",
@@ -950,12 +1144,27 @@ function App() {
         throw new Error("Paint transaction failed");
       }
 
-      const nextBoard = board.map((row) => [...row]);
-      nextBoard[selectedCell.y][selectedCell.x] = selectedColor;
+      setBoard((prevBoard) => {
+        const nextBoard = prevBoard.map((row) => [...row]);
 
-      setBoard(nextBoard);
-      saveBoardToCache(buildBoardCache(nextBoard, receipt.blockNumber));
+        for (const paint of draftPendingPaints) {
+          nextBoard[paint.y][paint.x] = paint.color;
+        }
 
+        saveBoardToCache(buildBoardCache(nextBoard, receipt.blockNumber));
+
+        return nextBoard;
+      });
+
+      setPendingPaints([]);
+      setPaintStatus({
+        isAdmin: livePaintStatus.isAdmin,
+        paintsUsed: livePaintStatus.paintsUsed + draftPendingPaints.length,
+        isFree:
+          livePaintStatus.isAdmin ||
+          livePaintStatus.paintsUsed + draftPendingPaints.length <
+            FREE_PAINTS_PER_WINDOW,
+      });
       setPaintTxState({
         phase: "success",
         message: "Paint Tx success!",
@@ -968,21 +1177,21 @@ function App() {
       }, 1000);
     } catch (error) {
       const message = getPaintErrorMessage(error);
-
-      setPaintTxState({
-        phase: "error",
-        message,
-      });
-
-      window.setTimeout(() => {
-        setPaintTxState({ phase: "idle" });
-      }, 4000);
-
+      showPaintError(message);
       console.error("Paint failed:", error);
     } finally {
       setIsPainting(false);
     }
-  }
+  }, [
+    buildDraftPendingPaints,
+    handleCancelEdit,
+    isConnected,
+    isPainting,
+    isPickerOpen,
+    openConnectModal,
+    paintStatus,
+    showPaintError,
+  ]);
 
   useEffect(() => {
     renderBoard();
@@ -999,6 +1208,18 @@ function App() {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape" && isPickerOpenRef.current) {
         handleCancelEdit();
+        return;
+      }
+
+      if (
+        event.key === "Enter" &&
+        isPickerOpenRef.current &&
+        !isPainting &&
+        selectedCellRef.current &&
+        getBatchPaintMode(paintStatus, buildDraftPendingPaints(true).length)
+      ) {
+        event.preventDefault();
+        handleStagePaint();
       }
     }
 
@@ -1046,8 +1267,15 @@ function App() {
         return;
       }
 
-      setSelectedCell(clickedCell);
+      const pendingPaint = pendingPaints.find(
+        (paint) => paint.x === clickedCell.x && paint.y === clickedCell.y,
+      );
+      const boardColor = board[clickedCell.y][clickedCell.x];
 
+      setSelectedColor(
+        pendingPaint?.color ?? boardColor ?? selectedColorRef.current,
+      );
+      setSelectedCell(clickedCell);
       setIsPickerOpen(true);
     }
 
@@ -1107,11 +1335,17 @@ function App() {
       window.removeEventListener("mouseup", handleWindowMouseUp);
     };
   }, [
+    board,
     handleCanvasWheel,
     handleCanvasMouseDown,
     handleWindowMouseMove,
     handleWindowMouseUp,
+    buildDraftPendingPaints,
     handleCancelEdit,
+    handleStagePaint,
+    isPainting,
+    pendingPaints,
+    paintStatus,
   ]);
 
   useEffect(() => {
@@ -1194,6 +1428,16 @@ function App() {
       })()
     : null;
 
+  const draftPendingPaints = buildDraftPendingPaints(isPickerOpen);
+  const draftBatchMode = getBatchPaintMode(
+    paintStatus,
+    draftPendingPaints.length,
+  );
+  const stagedBatchMode = getBatchPaintMode(paintStatus, pendingPaints.length);
+  const submitButtonColor = draftBatchMode === "paid" ? "#a039cd" : "#0bc11d";
+  const canStageCurrentPaint =
+    !isPainting && !!selectedCell && !!draftBatchMode;
+
   const [isWalletHoverFlipEnabled, setIsWalletHoverFlipEnabled] =
     useState(true);
 
@@ -1243,6 +1487,22 @@ function App() {
               </button>
             </div>
           </div>
+
+          {pendingPaints.length > 0 && (
+            <div className="hud-center">
+              <button
+                className={`hud-button hud-submit-button ${
+                  stagedBatchMode === "paid"
+                    ? "hud-submit-button--paid"
+                    : "hud-submit-button--free"
+                }`}
+                onClick={handleSubmitBatch}
+                disabled={isPainting}
+              >
+                SUBMIT
+              </button>
+            </div>
+          )}
 
           <div className="hud-right">
             <div className="hud-controls">
@@ -1422,16 +1682,11 @@ function App() {
                 className="utility-button"
                 style={{
                   flex: 1,
-                  backgroundColor:
-                    nextPaintIsFree === null
-                      ? "#0bc11d"
-                      : nextPaintIsFree
-                        ? "#0bc11d"
-                        : "#a039cd",
+                  backgroundColor: submitButtonColor,
                   opacity: isPainting ? 0.75 : 1,
                   cursor: isPainting ? "default" : "pointer",
                 }}
-                onClick={handleApplyColor}
+                onClick={handleSubmitBatch}
                 disabled={isPainting}
               >
                 {getPaintButtonLabel(isPainting, paintTxState)}
@@ -1440,13 +1695,14 @@ function App() {
               <button
                 className="utility-button"
                 style={{
-                  backgroundColor: "#d63a3a",
-                  opacity: isPainting ? 0.75 : 1,
+                  backgroundColor: "#ebc32f",
+                  opacity: canStageCurrentPaint ? 1 : 0.4,
+                  cursor: canStageCurrentPaint ? "pointer" : "default",
                 }}
-                onClick={handleCancelEdit}
-                disabled={isPainting}
+                onClick={handleStagePaint}
+                disabled={!canStageCurrentPaint}
               >
-                <X size={23} />
+                <Check size={23} />
               </button>
             </div>
           </div>
