@@ -29,6 +29,6 @@ const configs: Record<string, AppConfig> = {
 };
 
 // Change this to switch between configs (e.g. "hardhat", "arbitrumSepolia", "arbitrum")
-const ENV = "hardhat";
+const ENV = "arbitrumSepolia";
 
 export const APP_CONFIG = configs[ENV];

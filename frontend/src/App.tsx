@@ -27,6 +27,7 @@ const ABI = [
   "function paint(uint16 x, uint16 y, uint24 color) payable",
   "function getPaintStatus(address user) view returns (bool isFree, uint8 paintsUsed, uint256 windowStartTime)",
   "function paidPaintFeeWei() view returns (uint256)",
+  "function adminPainters(address) view returns (bool)",
   "event PixelPainted(address indexed painter, uint16 indexed x, uint16 indexed y, uint24 color)",
 ];
 
@@ -822,7 +823,9 @@ function App() {
     setSelectedCell(null);
     setIsEyedropperActive(false);
     setNextPaintIsFree(null);
-    setPaintTxState({ phase: "idle" });
+    window.setTimeout(() => {
+      setPaintTxState({ phase: "idle" });
+    }, 300);
   }, [isPainting]);
 
   async function handleApplyColor() {
@@ -878,9 +881,14 @@ function App() {
       const signerAddress = await signer.getAddress();
       const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
       const [isFree] = await contract.getPaintStatus(signerAddress);
+      const isAdminPainter = await contract.adminPainters(signerAddress);
       const paidPaintFeeWei = await contract.paidPaintFeeWei();
       const colorInt = parseInt(selectedColor.replace("#", ""), 16);
-      const txValue = isFree ? 0n : paidPaintFeeWei;
+      const txValue = isFree || isAdminPainter ? 0n : paidPaintFeeWei;
+
+      console.log("isFree:", isFree);
+      console.log("isAdminPainter:", isAdminPainter);
+      console.log("txValue:", txValue.toString());
 
       const tx = await contract.paint(
         selectedCell.x,
