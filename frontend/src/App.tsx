@@ -89,11 +89,17 @@ const BOARD_HEIGHT = 300;
 const CELL_SIZE = 5;
 const POPUP_WIDTH = 244;
 const POPUP_HEIGHT = 312;
-const CACHE_KEY = "bitplace_board_v1";
+const CACHE_VERSION = 2;
+const NORMALIZED_CONTRACT_ADDRESS = CONTRACT_ADDRESS.toLowerCase();
+const CACHE_KEY = `bitplace_board_v${CACHE_VERSION}_${TARGET_CHAIN_ID}_${NORMALIZED_CONTRACT_ADDRESS}`;
 
 type BoardCache = {
   board: (string | null)[][];
   lastSyncedBlock: number;
+  version: number;
+  chainId: number;
+  contractAddress: string;
+  lastUpdatedAt: number;
 };
 
 type CellPosition = {
@@ -150,6 +156,38 @@ function saveBoardToCache(cache: BoardCache) {
   }
 }
 
+function clearBoardCache() {
+  try {
+    localStorage.removeItem(CACHE_KEY);
+  } catch (error) {
+    console.warn("Failed to clear board cache", error);
+  }
+}
+
+function buildBoardCache(
+  board: (string | null)[][],
+  lastSyncedBlock: number,
+): BoardCache {
+  return {
+    board,
+    lastSyncedBlock,
+    version: CACHE_VERSION,
+    chainId: TARGET_CHAIN_ID,
+    contractAddress: NORMALIZED_CONTRACT_ADDRESS,
+    lastUpdatedAt: Date.now(),
+  };
+}
+
+function isValidBoardShape(board: unknown): board is (string | null)[][] {
+  return (
+    Array.isArray(board) &&
+    board.length === BOARD_HEIGHT &&
+    board.every(
+      (row: unknown) => Array.isArray(row) && row.length === BOARD_WIDTH,
+    )
+  );
+}
+
 function loadBoardFromCache(): BoardCache | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
@@ -159,18 +197,22 @@ function loadBoardFromCache(): BoardCache | null {
 
     if (
       !parsed ||
-      !Array.isArray(parsed.board) ||
-      parsed.board.length !== BOARD_HEIGHT ||
-      !Array.isArray(parsed.board[0]) ||
-      parsed.board[0].length !== BOARD_WIDTH ||
-      typeof parsed.lastSyncedBlock !== "number"
+      !isValidBoardShape(parsed.board) ||
+      typeof parsed.lastSyncedBlock !== "number" ||
+      parsed.version !== CACHE_VERSION ||
+      parsed.chainId !== TARGET_CHAIN_ID ||
+      typeof parsed.contractAddress !== "string" ||
+      parsed.contractAddress.toLowerCase() !== NORMALIZED_CONTRACT_ADDRESS ||
+      typeof parsed.lastUpdatedAt !== "number"
     ) {
+      clearBoardCache();
       return null;
     }
 
     return parsed as BoardCache;
   } catch (error) {
     console.warn("Failed to load board cache", error);
+    clearBoardCache();
     return null;
   }
 }
@@ -398,21 +440,23 @@ function App() {
           setIsIntroVisible(false);
         }, remaining);
 
-        const synced = await fetchPixelPaintedEventsSince(
-          cached.lastSyncedBlock + 1,
-        );
+        try {
+          const synced = await fetchPixelPaintedEventsSince(
+            cached.lastSyncedBlock + 1,
+          );
 
-        if (cancelled) return;
+          if (cancelled) return;
 
-        const syncedBoard = applyPatchesToBoard(cached.board, synced.patches);
+          const syncedBoard = applyPatchesToBoard(cached.board, synced.patches);
 
-        setBoard(syncedBoard);
-        saveBoardToCache({
-          board: syncedBoard,
-          lastSyncedBlock: synced.latestBlock,
-        });
+          setBoard(syncedBoard);
+          saveBoardToCache(buildBoardCache(syncedBoard, synced.latestBlock));
 
-        lastSyncedBlockRef.current = synced.latestBlock;
+          lastSyncedBlockRef.current = synced.latestBlock;
+        } catch (error) {
+          console.error("Initial cache sync failed:", error);
+          lastSyncedBlockRef.current = cached.lastSyncedBlock;
+        }
         return;
       }
 
@@ -421,10 +465,8 @@ function App() {
       if (cancelled) return;
 
       setBoard(freshBoard);
-      saveBoardToCache({
-        board: freshBoard,
-        lastSyncedBlock: currentBlock,
-      });
+      saveBoardToCache(buildBoardCache(freshBoard, currentBlock));
+      lastSyncedBlockRef.current = currentBlock;
 
       const elapsed = performance.now() - start;
       const remaining = Math.max(0, minSplashMs - elapsed);
@@ -912,10 +954,7 @@ function App() {
       nextBoard[selectedCell.y][selectedCell.x] = selectedColor;
 
       setBoard(nextBoard);
-      saveBoardToCache({
-        board: nextBoard,
-        lastSyncedBlock: receipt.blockNumber,
-      });
+      saveBoardToCache(buildBoardCache(nextBoard, receipt.blockNumber));
 
       setPaintTxState({
         phase: "success",
@@ -1101,10 +1140,7 @@ function App() {
         setBoard((prevBoard) => {
           const nextBoard = applyPatchesToBoard(prevBoard, synced.patches);
 
-          saveBoardToCache({
-            board: nextBoard,
-            lastSyncedBlock: synced.latestBlock,
-          });
+          saveBoardToCache(buildBoardCache(nextBoard, synced.latestBlock));
 
           return nextBoard;
         });
@@ -1265,7 +1301,7 @@ function App() {
             <div className="help-popup__title">About BitPlace</div>
             <div className="help-popup__body">
               BitPlace is a fully on-chain collaborative pixel art canvas on
-              Arbitrum One, similar to r/place.
+              Arbitrum One, similar to r/place or wPlace.
               <br />
               <br />
               This project is 100% just a fun way for me to learn various dev
@@ -1293,12 +1329,14 @@ function App() {
               in ETH.
               <br />
               <br />
-              Since this is all for fun, 100% of those fees go into a lottery
-              pool. Everytime you paint your 11th pixel of the day, you're
-              automatically entered into the lottery!
+              Since this is all for fun, 100% of those fees go into a{" "}
+              <strong>lottery pool</strong>. Everytime you paint your 11th pixel
+              of the day, you're automatically entered into the lottery. If you
+              win, you receive 75% of all ETH in the pool automatically!
               <br />
-              If you win, you receive 75% of all ETH in the pool automatically!
-              <br />
+              <span style={{ color: "#ffffff2e", fontSize: "0.9em" }}>
+                I get the other 25% so i can get rich off this amazing project!
+              </span>
               <br />
               Happy painting!
             </div>
